@@ -24,12 +24,9 @@
 
 #include "api_gps.h"
 #include "api_hal_uart.h"
-
-#if defined(ENABLE_GPS_EVENTS)
 #include "gps.h"
 #include "buffer.h"
 #include "gps_parse.h"
-#endif  /*  ENABLE_GPS_EVENTS   */
 
 #endif /*  ENABLE_GPS_TASK */
 
@@ -72,12 +69,8 @@ static HANDLE gpsTaskHandle;
 
 #define GPS_TRACE_INDEX 3
 
-#if defined(ENABLE_GPS_EVENTS)
-
 bool GpsIsRegistered = false;
 bool GpsIsOpen = true;
-
-#endif /*   ENABLE_GPS_EVENTS    */
 
 #endif /*   ENABLE_GPS_TASK     */
 
@@ -209,15 +202,15 @@ void EventDispatch(API_Event_t *pEvent)
         break;
 
 
-#if defined(ENABLE_GPS_TASK) && defined(ENABLE_GPS_EVENTS)
+#if defined(ENABLE_GPS_TASK)
 
     case API_EVENT_ID_NETWORK_REGISTERED_HOME:
     case API_EVENT_ID_NETWORK_REGISTERED_ROAMING:
         Trace(GPS_TRACE_INDEX, "[Network Registration Event] Network registration complete...");
         GpsIsRegistered = true;
         break;
-
-#endif /*  ENABLE_GPS_TASK && ENABLE_GPS_EVENTS     */
+        
+#endif  /*  ENABLE_GPS_TASK     */
 
     case API_EVENT_ID_NETWORK_REGISTER_SEARCHING:
         break;
@@ -284,7 +277,6 @@ void EventDispatch(API_Event_t *pEvent)
 
 #if defined(ENABLE_GPS_TASK)
 
-#if defined(ENABLE_GPS_EVENTS)
 
     case API_EVENT_ID_GPS_UART_RECEIVED:
         if(pEvent->param1)
@@ -293,12 +285,6 @@ void EventDispatch(API_Event_t *pEvent)
         }
         break;
 
-#else
-    case API_EVENT_ID_GPS_UART_RECEIVED:
-        Trace(GPS_TRACE_INDEX, "[GPS UART Rx Event] :: GPS coodinates: %s", pEvent->pParam1);
-        break;
-
-#endif  /*   ENABLE_GPS_EVENTS   */
 
 #endif   /*  ENABLE_GPS_TASK    */
 
@@ -559,36 +545,6 @@ void UART_ErrorCallback(UART_Error_t error)
 
 void GPS_Task(void *pData)
 {
-    
-#if !defined(ENABLE_GPS_EVENTS)
-
-    UART_Config_t uartConf = {0};
-    uartConf.baudRate = 115200;
-    uartConf.dataBits = UART_DATA_BITS_8;
-    uartConf.stopBits = UART_STOP_BITS_1;
-    uartConf.parity = UART_PARITY_NONE;
-    uartConf.rxCallback = NULL;
-    uartConf.errorCallback = NULL;
-    uartConf.useEvent = false;
-
-    if (UART_Init(UART_GPS, uartConf) == true)
-    {
-        if (GPS_Open(GPS_Callback))
-        {
-            Trace(GPS_TRACE_INDEX, "GPS Configurations complete...");
-        }
-        else
-        {
-            Trace(GPS_TRACE_INDEX, "GPS Configuration failed..");
-        }
-    }
-    else
-    {
-        Trace(GPS_TRACE_INDEX, "GPS UART Configurations failed...");
-    }
-
-#elif defined(ENABLE_GPS_EVENTS)
-
     GPS_Info_t *Local_psGpsInfo = Gps_GetInfo();
     uint8_t Local_au8GpsBuffer[300] = {0};
     bool Local_bInitState = true;
@@ -660,12 +616,9 @@ void GPS_Task(void *pData)
         UART_Init(UART1, Local_sUartConfig);
     }
 
-#endif /*  ENABLE_GPS_EVENTS   */
 
     while (1)
     {
-
-#if defined(ENABLE_GPS_EVENTS)
 
         if (GpsIsOpen == true)
         {
@@ -696,8 +649,8 @@ void GPS_Task(void *pData)
             Local_dLongitude = Local_i32Temp + (double)(Local_psGpsInfo->rmc.longitude.value - Local_i32Temp * Local_psGpsInfo->rmc.longitude.scale * 100) / Local_psGpsInfo->rmc.longitude.scale / 60;
 
             memset(Local_au8GpsBuffer, 0x00, 300);
-            UART_Write(UART1, Local_au8GpsBuffer, snprintf(Local_au8GpsBuffer, 300, "[Coordinates] Long: %f degrees, Lat: %f degrees", Local_dLongitude, Local_dLatitude));
-            Trace(GPS_TRACE_INDEX, "[Coordinates] Long: %f degrees, Lat: %f degrees", Local_dLongitude, Local_dLatitude);
+            UART_Write(UART1, Local_au8GpsBuffer, snprintf(Local_au8GpsBuffer, 300, "[Coordinates] Lat: %f degrees, Long: %f degrees\n", Local_dLatitude, Local_dLongitude));
+            Trace(GPS_TRACE_INDEX, "[Coordinates] Lat: %f degrees, Long: %f degrees", Local_dLatitude, Local_dLongitude);
             
         }
         else
@@ -705,45 +658,10 @@ void GPS_Task(void *pData)
             Trace(GPS_TRACE_INDEX, "GPS is not available due to initialization error...");
         }
 
-#endif  /*  ENABLE_GPS_EVENTS   */
-
         OS_Sleep(5000);
     }
 }
 
-/* ------------------------------------------------------------------------- */
-
-#if !defined(ENABLE_GPS_EVENTS)
-
-void GPS_Callback(UART_Callback_Param_t param)
-{
-    char Local_aTempBuff[1000] = {0};
-    char * Local_pcStart = NULL;
-
-    switch (param.port)
-    {
-    case UART_GPS:
-    {
-        Trace(GPS_TRACE_INDEX, "[GPS callback] :: Received  %d bytes from GPS", param.length);
-        if(param.length)
-        {
-            Local_pcStart = strstr(param.buf, "$");
-            if(Local_pcStart)
-            {
-                snprintf(Local_aTempBuff, 999, "%s", Local_pcStart);
-                Trace(GPS_TRACE_INDEX, "%s", Local_aTempBuff);
-            }
-        }
-    }
-    break;
-
-    default:
-        Trace(GPS_TRACE_INDEX, "[GPS callback] :: Invalid UART Index...");
-        break;
-    }
-}
-
-#endif /*   !ENABLE_GPS_EVENTS   */
 
 #endif /*   ENABLE_GPS_TASK     */
 
