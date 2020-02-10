@@ -1,7 +1,13 @@
+/* ------------------------------------------------------------------------- */
+/* --------------------------------- F21.h --------------------------------- */
+/* ------------------------------------------------------------------------- */
+
 #ifndef _F21_H_
 #define _F21_H_
 
-/* --------------------------- Tasks -------------------------------- */
+/* ------------------------------------------------------------------------- */
+/* --------------------------- Tasks' Constants ---------------------------- */
+/* ------------------------------------------------------------------------- */
 
 #define MAIN_TASK_PRIORITY      0
 #define MAIN_TASK_STACK_SIZE    1024
@@ -24,7 +30,7 @@
 #define SMS_TASK_NAME           "SmsTask"
 
 #define GPS_TASK_PRIORITY       5
-#define GPS_TASK_STACK_SIZE     1024
+#define GPS_TASK_STACK_SIZE     2048
 #define GPS_TASK_NAME           "GpsTask"
 
 #define GPRS_TASK_PRIORITY      6
@@ -35,18 +41,22 @@
 #define MQTT_TASK_STACK_SIZE    1024
 #define MQTT_TASK_NAME          "MqttTask"
 
-/* ------------------------ task switches ------------------------------ */
-#define ENABLE_GPIO_TASK
+/* ------------------------------------------------------------------------- */
+/* ---------------------------- Tasks' Switches ---------------------------- */
+/* ------------------------------------------------------------------------- */
+
+// #define ENABLE_GPIO_TASK
 // #define ENABLE_UART_TASK
 // #define ENABLE_DIAL_TASK
 // #define ENABLE_CALL_RECEIVE_TASK
 // #define ENABLE_SMS_SEND_TASK
 // #define ENABLE_SMS_RECEIVE_TASK
-// #define ENABLE_GPS_TASK
+#define ENABLE_GPS_TASK
 // #define ENABLE_GPRS_TASK
 // #define ENABLE_MQTT_TASK
 
-/* --------------------------- GPIO Task -------------------------------- */
+
+/* ----------------------------- GPIO Task Conf ---------------------------- */
 
 #if defined (ENABLE_GPIO_TASK)
 
@@ -60,17 +70,61 @@
 
 #endif /*   ENABLE_GPIO_TASK    */
 
-/* --------------------------- public APIs -------------------------------- */
+/* ----------------------------- UART Task conf ---------------------------- */
+
+// #define ENABLE_UART_EVENTS
+
+/* ----------------------------- GPS Task Conf ----------------------------- */
+
+#define ENABLE_GPS_EVENTS
+
+/* ------------------------------------------------------------------------- */
+/* ------------------------------ Tasks' APIs ------------------------------ */
+/* ------------------------------------------------------------------------- */
+
+/* ------------------------------- GPIO APIs ------------------------------- */
+
 void F21_Main(void * pData);
 void F21MainTask(void * pData);
 void EventDispatch(API_Event_t * pEvent);
 
 #if defined (ENABLE_GPIO_TASK)
+
 void GPIO_Task(void * pData);
+
 #endif  /*  ENABLE_GPIO_TASK    */
 
+/* ------------------------------- UART APIs ------------------------------- */
+
 #if defined (ENABLE_UART_TASK)
+
 void UART_Task(void * pData);
+void UART_ErrorCallback(UART_Error_t error);
+
+#if !defined (ENABLE_UART_EVENTS)
+void UART_RxCallback(UART_Callback_Param_t param);
+#endif /*   !ENABLE_UART_EVENTS */
+
 #endif  /*  ENABLE_UART_TASK    */
 
+/* ------------------------------- GPS  APIs ------------------------------- */
+
+#if defined(ENABLE_GPS_TASK)
+
+void GPS_Task(void *pData);
+
+#if !defined(ENABLE_GPS_EVENTS)
+void GPS_Callback(UART_Callback_Param_t param);
+#endif  /*  !ENABLE_GPS_EVENTS   */
+
+#endif  /*  ENABLE_GPS_TASK */
+
+
+
+
 #endif  /* _F21_H_  */
+
+/* ------------------------------------------------------------------------- */
+/* ------------------------------ End Of File ------------------------------ */
+/* ------------------------------------------------------------------------- */
+

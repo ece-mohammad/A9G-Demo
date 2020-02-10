@@ -5,12 +5,22 @@
 # Name of the module
 LOCAL_NAME := F21
 
-# List of submodules which contain code we need to include in the final lib
-LOCAL_API_DEPENDS := \
 
-LOCAL_ADD_INCLUDE := include\
-                    include/std_inc \
-                    include/api_inc \
+# Space-separated list of modules (libraries) your module depends upon.
+# These should include the toplevel name, e.g. "libs/gps"
+LOCAL_MODULE_DEPENDS :=  \
+
+
+# Add includes from other modules we do not wish to link to
+LOCAL_API_DEPENDS := libs/gps \
+                     libs/utils \
+
+
+# include folder
+LOCAL_ADD_INCLUDE := include \
+                     include/std_inc \
+                     include/api_inc \
+                     libs/gps/minmea/src \
 
 # Set this to any non-null string to signal a module which 
 # generates a binary (must contain a "main" entry point). 
@@ -25,6 +35,7 @@ MYCFLAGS +=
 ## ------------------------------------- ##
 ##	List all your sources here           ##
 ## ------------------------------------- ##
+S_SRC := ${notdir ${wildcard src/*.s}}
 C_SRC := ${notdir ${wildcard src/*.c}}
 
 ## ------------------------------------- ##
