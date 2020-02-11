@@ -1,5 +1,10 @@
+/* ------------------------------------------------------------------------- */
+/* --------------------------------- F21.c --------------------------------- */
+/* ------------------------------------------------------------------------- */
+
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
 #include <math.h>
@@ -30,6 +35,37 @@
 
 #endif /*  ENABLE_GPS_TASK */
 
+#if defined(ENABLE_SMS_TASK)
+
+#include "api_sms.h"
+#include "api_hal_uart.h"
+
+uint8_t SMS_UNICODE_MESSAGE[] = {
+    0x00, 'j',
+    0x00, 'e',
+    0x00, 'l',
+    0x00, 'l',
+    0x00, 'o',
+    0x00, ' ',
+    0x00, 'f',
+    0x00, 'r',
+    0x00, 'o',
+    0x00, 'm',
+    0x00, ' ',
+    0x00, 'p',
+    0x00, 'u',
+    0x00, 'd',
+    0x00, 'd',
+    0x00, 'i',
+    0x00, 'n',
+    0x00, 'g'};
+
+bool bSmsInitState = true;
+
+#define SMS_TEST_PHONE_NUMBER "01007445554"
+
+#endif /*  ENABLE_SMS_TASK    */
+
 /* ------------------------------------------------------------------------- */
 /* --------------------- Global Variables & Definitions -------------------- */
 /* ------------------------------------------------------------------------- */
@@ -37,7 +73,6 @@
 /* ---------------------------- Main task handle --------------------------- */
 
 static HANDLE mainTaskHandle;
-
 
 /* ---------------------------- GPIO task handle --------------------------- */
 
@@ -49,7 +84,6 @@ static HANDLE gpioTaskHandle;
 
 #endif /*  ENABLE_GPIO_TASK    */
 
-
 /* ---------------------------- UART task handle --------------------------- */
 
 #if defined(ENABLE_UART_TASK)
@@ -59,7 +93,6 @@ static HANDLE uartTaskHandle;
 #define UART_TRACE_INDEX 2
 
 #endif /*  ENABLE_UART_TASK    */
-
 
 /* ---------------------------- GPS task handle --------------------------- */
 
@@ -74,7 +107,6 @@ bool GpsIsOpen = true;
 
 #endif /*   ENABLE_GPS_TASK     */
 
-
 /* ---------------------------- Call task handle --------------------------- */
 
 #if defined(ENABLE_CALL_RECEIVE_TASK) || defined(ENABLE_DIAL_TASK)
@@ -86,14 +118,15 @@ static HANDLE callTaskHandle;
 #endif /*  ENABLE_CALL_RECEIVE_TASK || ENABLE_DIAL_TASK    */
 
 /* ---------------------------- SMS task handle ---------------------------- */
-#if defined(ENABLE_SMS_RECEIVE_TASK) || defined(ENABLE_SMS_SEND_TASK)
+#if defined(ENABLE_SMS_TASK)
 
 static HANDLE smsTaskHandle;
 
+bool smsNetworkReg = false;
+
 #define SMS_TRACE_INDEX 5
 
-#endif /*  ENABLE_SMS_RECEIVE_TASK || ENABLE_SMS_SEND_TASK */
-
+#endif /*  ENABLE_SMS_TASK  */
 
 /* ---------------------------- GPRS task handle --------------------------- */
 
@@ -114,11 +147,13 @@ static HANDLE mqttTaskHandle;
 
 #endif /*  ENABLE_MQTT_TASK    */
 
+bool bSystemReady = false;
+bool bNetworkRegistration = false;
+
 /* ----------------------------- Trace Indices ----------------------------- */
 
-#define BATTERY_INFO_TRACE_INDEX    15
-#define SYS_INFO_TRACE_INDEX        16
-
+#define BATTERY_INFO_TRACE_INDEX 15
+#define SYS_INFO_TRACE_INDEX 16
 
 /* ------------------------------------------------------------------------- */
 /* ---------------------------- API Definitions ---------------------------- */
@@ -148,6 +183,10 @@ void F21MainTask(void *pData)
     gpsTaskHandle = OS_CreateTask(GPS_Task, NULL, NULL, GPS_TASK_STACK_SIZE, GPS_TASK_PRIORITY, 0, 0, GPS_TASK_NAME);
 #endif /*   ENABLE_UART_TASK    */
 
+#if defined(ENABLE_SMS_TASK)
+    smsTaskHandle = OS_CreateTask(SMS_Task, NULL, NULL, SMS_TASK_STACK_SIZE, SMS_TASK_PRIORITY, 0, 0, SMS_TASK_NAME);
+#endif /*   ENABLE_SMS_TASK     */
+
     while (1)
     {
         if (OS_WaitEvent(mainTaskHandle, (void **)&Local_sEvent, OS_TIME_OUT_WAIT_FOREVER))
@@ -171,6 +210,7 @@ void EventDispatch(API_Event_t *pEvent)
         break;
 
     case API_EVENT_ID_SYSTEM_READY:
+        bSystemReady = true;
         Trace(SYS_INFO_TRACE_INDEX, "[SYSTEM READY EVENT] Pudding system is ready...");
         break;
 
@@ -187,106 +227,67 @@ void EventDispatch(API_Event_t *pEvent)
         Trace(SYS_INFO_TRACE_INDEX, "[SIGNAL QUALITY EVENT] RSSI: %d", pEvent->param1 * 2 - 113);
         Trace(SYS_INFO_TRACE_INDEX, "[SIGNAL QUALITY EVENT] RX Qual: %d", pEvent->param2);
         break;
-    
+
     case API_EVENT_ID_NETWORK_GOT_TIME:
-        {
-            RTC_Time_t * Local_psCurrentTime = (RTC_Time_t *) pEvent->pParam1;
-            Trace(SYS_INFO_TRACE_INDEX, "[NETWORK TIME EVENT] Netowrk Date: %02d/%02d/%04d Time : %02d:%02d:%02d", Local_psCurrentTime->day, Local_psCurrentTime->month, Local_psCurrentTime->year, Local_psCurrentTime->hour, Local_psCurrentTime->minute, Local_psCurrentTime->second );
-        }
-        break;
-    
+    {
+        RTC_Time_t *Local_psCurrentTime = (RTC_Time_t *)pEvent->pParam1;
+        Trace(SYS_INFO_TRACE_INDEX, "[NETWORK TIME EVENT] Netowrk Date: %02d/%02d/%04d Time : %02d:%02d:%02d", Local_psCurrentTime->day, Local_psCurrentTime->month, Local_psCurrentTime->year, Local_psCurrentTime->hour, Local_psCurrentTime->minute, Local_psCurrentTime->second);
+    }
+    break;
+
     case API_EVENT_ID_NETWORK_CELL_INFO:
-        {
-            Trace(SYS_INFO_TRACE_INDEX, "[NETWORK TIME EVENT] Current cell number: %d", pEvent->param1 );
-        }
+        Trace(SYS_INFO_TRACE_INDEX, "[NETWORK TIME EVENT] Current cell number: %d", pEvent->param1);
         break;
-
-
-#if defined(ENABLE_GPS_TASK)
 
     case API_EVENT_ID_NETWORK_REGISTERED_HOME:
     case API_EVENT_ID_NETWORK_REGISTERED_ROAMING:
-        Trace(GPS_TRACE_INDEX, "[Network Registration Event] Network registration complete...");
-        GpsIsRegistered = true;
-        break;
-        
-#endif  /*  ENABLE_GPS_TASK     */
-
-    case API_EVENT_ID_NETWORK_REGISTER_SEARCHING:
+        Trace(SYS_INFO_TRACE_INDEX, "[Network Registration Event] Network registration complete...");
+        bNetworkRegistration = true;
         break;
 
-    case API_EVENT_ID_NETWORK_REGISTER_DENIED:
-        break;
+#if defined(ENABLE_UART_TASK) || defined(ENABLE_SMS_TASK)
 
-    case API_EVENT_ID_NETWORK_REGISTER_NO:
-        break;
-
-    case API_EVENT_ID_NETWORK_DEREGISTER:
-        break;
-
-    case API_EVENT_ID_NETWORK_DETACHED:
-        break;
-
-    case API_EVENT_ID_NETWORK_ATTACH_FAILED:
-        break;
-
-    case API_EVENT_ID_NETWORK_ATTACHED:
-        break;
-
-    case API_EVENT_ID_NETWORK_DEACTIVED:
-        break;
-
-    case API_EVENT_ID_NETWORK_ACTIVATE_FAILED:
-        break;
-
-    case API_EVENT_ID_NETWORK_ACTIVATED:
-        break;
-
-#if defined(ENABLE_UART_TASK) && defined(ENABLE_UART_EVENTS)
+#if defined(ENABLE_SMS_TASK)
 
     case API_EVENT_ID_UART_RECEIVED:
-        switch (pEvent->param1)
-        {
-        case UART1:
-        {
-            CHAR buffer[100] = {0};
-            memcpy(buffer, pEvent->pParam1, pEvent->param2);
-            UART_Write(UART1, buffer, pEvent->param2);
-            Trace(UART_TRACE_INDEX, "[UART RX EVENT] Received [ %d ] bytes on UART 1 : %s", pEvent->param2, buffer);
-        }
+        SMS_UART_RX_EventHandler(pEvent);
         break;
 
-        case UART2:
-        {
-            CHAR buffer[100] = {0};
-            memcpy(buffer, pEvent->pParam1, pEvent->param2);
-            UART_Write(UART2, buffer, pEvent->param2);
-            Trace(UART_TRACE_INDEX, "[UART RX EVENT] Received [ %d ] bytes on UART 2 : %s", pEvent->param2, buffer);
-        }
+#else
+
+#if defined(ENABLE_UART_EVENTS)
+
+    case API_EVENT_ID_UART_RECEIVED:
+        UART_RX_EventHandler(pEvent);
         break;
 
-        case API_EVENT_ID_GPS_UART_RECEIVED:
-            break;
+#endif /*  ENABLE_UART_EVENTS  */
 
-        default:
-            Trace(UART_TRACE_INDEX, "[UART RX EVENT] UART number Error!!");
-            break;
-        }
+#endif /*   ENABLE_SMS_TASK    */
 
-#endif /*  ENABLE_UART_TASK || ENABLE_UART_EVENTS  */
+#endif /*  ENABLE_UART_TASK || ENABLE_SMS_TASK  */
 
 #if defined(ENABLE_GPS_TASK)
 
-
     case API_EVENT_ID_GPS_UART_RECEIVED:
-        if(pEvent->param1)
+        if (pEvent->param1)
         {
             GPS_Update(pEvent->pParam1, pEvent->param1);
+            Trace(GPS_TRACE_INDEX, "[GPS UART EVENT] Updating GPS data : %s", pEvent->pParam1);
         }
         break;
 
+#endif /*  ENABLE_GPS_TASK    */
 
-#endif   /*  ENABLE_GPS_TASK    */
+#if defined(ENABLE_SMS_TASK)
+
+    case API_EVENT_ID_SMS_RECEIVED:
+        break;
+
+    case API_EVENT_ID_SMS_SENT:
+        Trace(SMS_TRACE_INDEX, "[SMS SENT EVENT] SMS Sent...");
+        break;
+#endif /*  ENABLE_SMS_TASK    */
 
     case API_EVENT_ID_POWER_INFO:
         Trace(BATTERY_INFO_TRACE_INDEX, "[POWER INFO EVENT] Battery charger state: %d", ((pEvent->param1 >> 16) & 0xFFFFu));
@@ -343,24 +344,24 @@ void GPIO_Task(void *pData)
 #if defined(ENABLE_INDICATOR_LED) || defined(ENABLE_STATUS_UPDATE)
 
     PM_PowerEnable(POWER_TYPE_VPAD, true);
-    Trace(GPIO_TRACE_INDEX, "Enabled power for gpio pins [25 : 36] and [ 0 : 7 ]");
+    Trace(GPIO_TRACE_INDEX, "[GPIO] Enabled power for gpio pins [25 : 36] and [ 0 : 7 ]");
 
 #endif
 
 #if defined(ENABLE_INDICATOR_LED)
 
     GPIO_Init(indicatorLed);
-    Trace(GPIO_TRACE_INDEX, "Configured indicator led...");
+    Trace(GPIO_TRACE_INDEX, "[GPIO] Configured indicator led...");
 
 #endif /*  ENABLE_INDICATOR_LED    */
 
 #if defined(ENABLE_STATUS_UPDATE)
 
     GPIO_Init(statusLed);
-    Trace(GPIO_TRACE_INDEX, "Configured status led...");
+    Trace(GPIO_TRACE_INDEX, "[GPIO] Configured status led...");
 
     GPIO_Init(statusUpdate);
-    Trace(GPIO_TRACE_INDEX, "Configured status update pin...");
+    Trace(GPIO_TRACE_INDEX, "[GPIO] Configured status update pin...");
 
 #endif /*  ENABLE_STATUS_UPDATE    */
 
@@ -371,7 +372,7 @@ void GPIO_Task(void *pData)
 
         indicatorLedLevel = (indicatorLedLevel == GPIO_LEVEL_HIGH) ? GPIO_LEVEL_LOW : GPIO_LEVEL_HIGH;
         GPIO_SetLevel(indicatorLed, indicatorLedLevel);
-        Trace(GPIO_TRACE_INDEX, "Toggling indicator led...");
+        Trace(GPIO_TRACE_INDEX, "[GPIO] Toggling indicator led...");
 
 #endif /*  ENABLE_INDICATOR_LED    */
 
@@ -383,16 +384,16 @@ void GPIO_Task(void *pData)
             statusPinLevelUpdate = statusPinLevel;
             statusLedLevel = (statusPinLevel == GPIO_LEVEL_HIGH) ? GPIO_LEVEL_LOW : GPIO_LEVEL_HIGH;
             GPIO_SetLevel(statusLed, statusLedLevel);
-            Trace(GPIO_TRACE_INDEX, "Updating status...");
+            Trace(GPIO_TRACE_INDEX, "[GPIO] Updating status...");
         }
 
         if (statusPinLevel == GPIO_LEVEL_HIGH)
         {
-            Trace(GPIO_TRACE_INDEX, "Current status : HIGH");
+            Trace(GPIO_TRACE_INDEX, "[GPIO] Current status : HIGH");
         }
         else
         {
-            Trace(GPIO_TRACE_INDEX, "Current status : LOW");
+            Trace(GPIO_TRACE_INDEX, "[GPIO] Current status : LOW");
         }
 
 #endif /*  ENABLE_STATUS_UPDATE    */
@@ -414,12 +415,6 @@ void UART_Task(void *pData)
     API_Event_t *Local_psUartEvent = NULL;
 #endif /*  ENABLE_UART_EVENTS  */
 
-    CHAR uartTxBuffer[100] = {0};
-    CHAR uartRxBuffer[100] = {0};
-    uint32_t uartTxCounter = 0;
-    uint32_t uartReadBytes = 0;
-    uint32_t uartSentBytes = 0;
-
     UART_Config_t uartConfig = {0};
 
     uartConfig.baudRate = UART_BAUD_RATE_115200;
@@ -429,31 +424,29 @@ void UART_Task(void *pData)
     uartConfig.stopBits = UART_STOP_BITS_1;
 
 #if defined(ENABLE_UART_EVENTS)
-    uartConfig.rxCallback = UART_RxCallback;
-    uartConfig.useEvent = true;
-#endif /*  ENABLE_UART_EVENTS  */
-
-#if !defined(ENABLE_UART_EVENTS)
     uartConfig.rxCallback = NULL;
+    uartConfig.useEvent = true;
+#else
+    uartConfig.rxCallback = UART_RxCallback;
     uartConfig.useEvent = false;
 #endif /*  !ENABLE_UART_EVENTS  */
 
     if (UART_Init(UART1, uartConfig))
     {
-        Trace(UART_TRACE_INDEX, "UART 1 configuration complete...");
+        Trace(UART_TRACE_INDEX, "[UART] UART 1 configuration complete...");
     }
     else
     {
-        Trace(UART_TRACE_INDEX, "Failed to configure UART 1");
+        Trace(UART_TRACE_INDEX, "[UART] Failed to configure UART 1");
     }
 
     if (UART_Init(UART2, uartConfig))
     {
-        Trace(UART_TRACE_INDEX, "UART 2 configuration complete...");
+        Trace(UART_TRACE_INDEX, "[UART] UART 2 configuration complete...");
     }
     else
     {
-        Trace(UART_TRACE_INDEX, "Failed to configure UART 1");
+        Trace(UART_TRACE_INDEX, "[UART] Failed to configure UART 1");
     }
 
     while (1)
@@ -477,19 +470,52 @@ void UART_Task(void *pData)
 
 /* ------------------------------------------------------------------------- */
 
-#if !defined(ENABLE_UART_EVENTS)
+#if defined(ENABLE_UART_EVENTS)
+
+void UART_RX_EventHandler(API_Event_t *pEvent)
+{
+    switch (pEvent->param1)
+    {
+    case UART1:
+    {
+        CHAR buffer[100] = {0};
+        memcpy(buffer, pEvent->pParam1, pEvent->param2);
+        UART_Write(UART1, buffer, pEvent->param2);
+        Trace(UART_TRACE_INDEX, "[UART RX EVENT] Received [ %d ] bytes on UART 1 : %s", pEvent->param2, buffer);
+    }
+    break;
+
+    case UART2:
+    {
+        CHAR buffer[100] = {0};
+        memcpy(buffer, pEvent->pParam1, pEvent->param2);
+        UART_Write(UART2, buffer, pEvent->param2);
+        Trace(UART_TRACE_INDEX, "[UART RX EVENT] Received [ %d ] bytes on UART 2 : %s", pEvent->param2, buffer);
+    }
+    break;
+
+    case API_EVENT_ID_GPS_UART_RECEIVED:
+        break;
+
+    default:
+        Trace(UART_TRACE_INDEX, "[UART RX EVENT] UART number Error!!");
+        break;
+    }
+}
+
+#else
 
 void UART_RxCallback(UART_Callback_Param_t param)
 {
     switch (param.port)
     {
     case UART1:
-        Trace(UART_TRACE_INDEX, "Received [%d] bytes on UART 1 : %s", param.length, param.buf);
-        UART_Write(UART2, param.buf, param.length);
+        Trace(UART_TRACE_INDEX, "[UART] UART 1 Received [%d] bytes : %s", param.length, param.buf);
+        UART_Write(UART1, param.buf, param.length);
         break;
 
     case UART2:
-        Trace(UART_TRACE_INDEX, "Received [%d] bytes on UART 2 : %s", param.length, param.buf);
+        Trace(UART_TRACE_INDEX, "[UART] UART 2 Received [%d] bytes : %s", param.length, param.buf);
         UART_Write(UART2, param.buf, param.length);
         break;
 
@@ -504,7 +530,7 @@ void UART_RxCallback(UART_Callback_Param_t param)
 
 void UART_ErrorCallback(UART_Error_t error)
 {
-    Trace(3, "UART Error callback");
+    Trace(UART_TRACE_INDEX, "UART Error callback");
     switch (error)
     {
     case UART_ERROR_RX_LINE_ERROR:
@@ -549,7 +575,7 @@ void GPS_Task(void *pData)
     uint8_t Local_au8GpsBuffer[300] = {0};
     bool Local_bInitState = true;
     uint8_t Local_u8IsFixed = 0;
-    CHAR * Local_pu8FixStr = NULL;
+    CHAR *Local_pu8FixStr = NULL;
     double Local_dLatitude = 0;
     double Local_dLongitude = 0;
     int32_t Local_i32Temp = 0;
@@ -563,7 +589,7 @@ void GPS_Task(void *pData)
     Local_sUartConfig.errorCallback = NULL;
     Local_sUartConfig.rxCallback = NULL;
 
-    while(GpsIsRegistered == false)
+    while (bNetworkRegistration == false)
     {
         Trace(GPS_TRACE_INDEX, "Waiting for network registration..");
         OS_Sleep(2000);
@@ -581,7 +607,7 @@ void GPS_Task(void *pData)
         Trace(GPS_TRACE_INDEX, "GPS Configurations failed...");
     }
 
-    if(Local_bInitState)
+    if (Local_bInitState)
     {
         while (Local_psGpsInfo->rmc.latitude.value == 0)
         {
@@ -611,11 +637,10 @@ void GPS_Task(void *pData)
 
     GpsIsOpen = Local_bInitState;
 
-    if(Local_bInitState)
+    if (Local_bInitState)
     {
         UART_Init(UART1, Local_sUartConfig);
     }
-
 
     while (1)
     {
@@ -623,17 +648,17 @@ void GPS_Task(void *pData)
         if (GpsIsOpen == true)
         {
             Local_u8IsFixed = MAX(Local_psGpsInfo->gsa[0].fix_type, Local_psGpsInfo->gsa[1].fix_type);
-            if(Local_u8IsFixed == 2)
+            if (Local_u8IsFixed == 2)
             {
                 Local_pu8FixStr = "2D Fix";
             }
-            else if(Local_u8IsFixed == 3)
+            else if (Local_u8IsFixed == 3)
             {
-                if(Local_psGpsInfo->gga.fix_quality == 1)
+                if (Local_psGpsInfo->gga.fix_quality == 1)
                 {
                     Local_pu8FixStr = "3D Fix";
                 }
-                else if(Local_psGpsInfo->gga.fix_quality == 2)
+                else if (Local_psGpsInfo->gga.fix_quality == 2)
                 {
                     Local_pu8FixStr = "3D/DGPS Fix";
                 }
@@ -649,22 +674,138 @@ void GPS_Task(void *pData)
             Local_dLongitude = Local_i32Temp + (double)(Local_psGpsInfo->rmc.longitude.value - Local_i32Temp * Local_psGpsInfo->rmc.longitude.scale * 100) / Local_psGpsInfo->rmc.longitude.scale / 60;
 
             memset(Local_au8GpsBuffer, 0x00, 300);
-            UART_Write(UART1, Local_au8GpsBuffer, snprintf(Local_au8GpsBuffer, 300, "[Coordinates] Lat: %f degrees, Long: %f degrees\n", Local_dLatitude, Local_dLongitude));
-            Trace(GPS_TRACE_INDEX, "[Coordinates] Lat: %f degrees, Long: %f degrees", Local_dLatitude, Local_dLongitude);
-            
+            UART_Write(UART1, Local_au8GpsBuffer, snprintf(Local_au8GpsBuffer, 300, "[Coordinates (latitude, logitude)] : %f , %f degrees\n", Local_dLatitude, Local_dLongitude));
+            Trace(GPS_TRACE_INDEX, "[GPS INFO] Fix mode: %d, BDS Fix mode: %d, fix quality: %d", Local_psGpsInfo->gsa[0].fix_type, Local_psGpsInfo->gsa[1].fix_type, Local_psGpsInfo->gga.fix_quality);
+            Trace(GPS_TRACE_INDEX, "[GPS INFO] Satellites tracked: %d, GPS staellites total: %d, is fixed: %s", Local_psGpsInfo->gga.satellites_tracked, Local_psGpsInfo->gsv[0].total_sats, Local_pu8FixStr);
+            Trace(GPS_TRACE_INDEX, "[GPS INFO] Coordinate System: WGS84, %f, %f degrees, altitude: %d", Local_dLatitude, Local_dLongitude, Local_psGpsInfo->gga.altitude.value);
         }
         else
         {
             Trace(GPS_TRACE_INDEX, "GPS is not available due to initialization error...");
         }
 
-        OS_Sleep(5000);
+        OS_Sleep(10000);
     }
 }
-
 
 #endif /*   ENABLE_GPS_TASK     */
 
 /* ------------------------------------------------------------------------- */
+
+#if defined(ENABLE_SMS_TASK)
+
+void SMS_Task(void *pData)
+{
+    API_Event_t *Local_psSmsEvent = NULL;
+    SMS_Parameter_t Local_sSmsParam = {0};
+    UART_Config_t Local_sUartConf = {0};
+
+    Local_sSmsParam.fo = 17;
+    Local_sSmsParam.vp = 167;
+    Local_sSmsParam.pid = 0;
+    Local_sSmsParam.dcs = 8; // For English
+
+    Local_sUartConf.baudRate = UART_BAUD_RATE_115200;
+    Local_sUartConf.dataBits = UART_DATA_BITS_8;
+    Local_sUartConf.stopBits = UART_STOP_BITS_1;
+    Local_sUartConf.parity = UART_PARITY_NONE;
+    Local_sUartConf.errorCallback = NULL;
+    Local_sUartConf.rxCallback = NULL;
+    Local_sUartConf.useEvent = true;
+
+    if (SMS_SetFormat(SMS_FORMAT_TEXT, SIM0) == true)
+    {
+        Trace(SMS_TRACE_INDEX, "[SMS] Setting SMS format was successful..");
+    }
+    else
+    {
+        Trace(SMS_TRACE_INDEX, "[SMS] Setting SMS format failed..");
+        bSmsInitState = false;
+    }
+
+    if ((bSmsInitState == true) && (SMS_SetParameter(&Local_sSmsParam, SIM0) == true))
+    {
+        Trace(SMS_TRACE_INDEX, "[SMS] SMS paramter set successfully...");
+    }
+    else
+    {
+        Trace(SMS_TRACE_INDEX, "[SMS] SMS paramter set failed...");
+        bSmsInitState = false;
+    }
+
+    if ((bSmsInitState == true) && (SMS_SetNewMessageStorage(SMS_STORAGE_SIM_CARD) == true))
+    {
+        Trace(SMS_TRACE_INDEX, "[SMS] Allocated memory for SMS in SIM card...");
+    }
+    else
+    {
+        Trace(SMS_TRACE_INDEX, "[SMS]  Failed to allocated memory for SMS storage");
+        bSmsInitState = false;
+    }
+
+    if (bSmsInitState == true)
+    {
+        Trace(SMS_TRACE_INDEX, "[SMS] SMS initialization complete...");
+    }
+    else
+    {
+        Trace(SMS_TRACE_INDEX, "[SMS] SMS initialization failed...");
+    }
+
+    UART_Init(UART1, Local_sUartConf);
+
+    while (1)
+    {
+        if (OS_WaitEvent(smsTaskHandle, (void **)&Local_psSmsEvent, OS_TIME_OUT_WAIT_FOREVER) == true)
+        {
+            EventDispatch(Local_psSmsEvent);
+            OS_Free(Local_psSmsEvent->pParam1);
+            OS_Free(Local_psSmsEvent->pParam2);
+            OS_Free(Local_psSmsEvent);
+        }
+    }
+}
+
+/* ------------------------------------------------------------------------- */
+
+void SMS_UART_RX_EventHandler(API_Event_t *pEvent)
+{
+    {
+        uint8_t Local_au8MessageBody[400] = {0};
+        uint8_t Local_au8MessageBuffer[200] = {0};
+        uint32_t Local_u32MessageLen = 0;
+        uint32_t Local_u32Index = 0;
+        char *Local_pcMessageStart = NULL;
+
+        switch (pEvent->param1)
+        {
+        case UART1:
+            Trace(SMS_TRACE_INDEX, "[UART RX EVENT] Received string: %s", pEvent->pParam1);
+            if ((Local_pcMessageStart = strstr(pEvent->pParam1, "send:")))
+            {
+                Local_pcMessageStart += 5;
+                Local_u32MessageLen = sprintf(Local_au8MessageBuffer, "%s", Local_pcMessageStart);
+                for(; Local_u32Index < Local_u32MessageLen; Local_u32Index++)
+                {
+                    Local_au8MessageBody[(Local_u32Index << 1) + 1] = Local_au8MessageBuffer[Local_u32Index];
+                }
+                SMS_SendMessage(SMS_TEST_PHONE_NUMBER, (const uint8_t *)Local_au8MessageBody, (Local_u32MessageLen << 1), SIM0);
+                Trace(SMS_TRACE_INDEX, "[SMS] Sent SMS: %s", Local_pcMessageStart);
+            }
+            break;
+
+        default:
+            break;
+        }
+    }
+}
+
+/* ------------------------------------------------------------------------- */
+
+#endif /*  ENABLE_SMS_TASK   */
+
+
+/* ------------------------------------------------------------------------- */
 /* ------------------------------ End Of File ------------------------------ */
 /* ------------------------------------------------------------------------- */
+

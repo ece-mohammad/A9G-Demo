@@ -49,9 +49,8 @@
 // #define ENABLE_UART_TASK
 // #define ENABLE_DIAL_TASK
 // #define ENABLE_CALL_RECEIVE_TASK
-// #define ENABLE_SMS_SEND_TASK
-// #define ENABLE_SMS_RECEIVE_TASK
-#define ENABLE_GPS_TASK
+#define ENABLE_SMS_TASK
+// #define ENABLE_GPS_TASK
 // #define ENABLE_GPRS_TASK
 // #define ENABLE_MQTT_TASK
 
@@ -73,6 +72,14 @@
 /* ----------------------------- UART Task conf ---------------------------- */
 
 // #define ENABLE_UART_EVENTS
+
+/* ----------------------------- SMS Task conf ----------------------------- */
+
+#if defined(ENABLE_SMS_EVENTS)
+
+
+
+#endif  /*  ENABLE_SMS_EVENTS   */
 
 /* ------------------------------------------------------------------------- */
 /* ------------------------------ Tasks' APIs ------------------------------ */
@@ -97,7 +104,9 @@ void GPIO_Task(void * pData);
 void UART_Task(void * pData);
 void UART_ErrorCallback(UART_Error_t error);
 
-#if !defined (ENABLE_UART_EVENTS)
+#if defined (ENABLE_UART_EVENTS)
+void UART_RX_EventHandler(API_Event_t *pEvent);
+#else
 void UART_RxCallback(UART_Callback_Param_t param);
 #endif /*   !ENABLE_UART_EVENTS */
 
@@ -115,8 +124,14 @@ void GPS_Callback(UART_Callback_Param_t param);
 
 #endif  /*  ENABLE_GPS_TASK */
 
+/* ------------------------------- SMS  APIs ------------------------------- */
 
+#if defined(ENABLE_SMS_TASK)
 
+void SMS_Task(void * pData);
+void SMS_UART_RX_EventHandler(API_Event_t *pEvent);
+
+#endif /*   ENABLE_SMS_TASK   */
 
 #endif  /* _F21_H_  */
 
