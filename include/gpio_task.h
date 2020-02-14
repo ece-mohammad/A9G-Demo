@@ -1,52 +1,43 @@
 /* ------------------------------------------------------------------------- */
-/* --------------------------------- F21.h --------------------------------- */
+/* ------------------------------ gpio_Task.c ------------------------------ */
 /* ------------------------------------------------------------------------- */
 
-#ifndef _F21_H_
-#define _F21_H_
+#ifndef _GPIO_TASK_H_
+#define _GPIO_TASK_H_
+
+
+/* ------------------------------------------------------------------------- */
+/* ----------------------------- GPIO Task Conf ---------------------------- */
+/* ------------------------------------------------------------------------- */
+
+#define INDICATOR_LED_PIN       GPIO_PIN27
+#define STATUS_LED_PIN          GPIO_PIN28
+#define STATUS_UPDATE_PIN       GPIO_PIN25
+
+
+#define ENABLE_INDICATOR_LED    
+#define ENABLE_STATUS_UPDATE
 
 /* ------------------------------------------------------------------------- */
 /* --------------------------- Tasks' Constants ---------------------------- */
 /* ------------------------------------------------------------------------- */
 
-#define MAIN_TASK_PRIORITY          0
-#define MAIN_TASK_STACK_SIZE        1024
-#define MAIN_TASK_NAME              "MainTask"
+#define GPIO_TASK_PRIORITY          1
+#define GPIO_TASK_STACK_SIZE        1024
+#define GPIO_TASK_NAME              "GpioTask"
 
-
-#define CELL_INFO_TASK_PRIORITY     7
-#define CELL_INFO_TASK_STACK_SIZE   2048
-#define CELL_INFO_TASK_NAME         "CellInfoTask"
-
-#define MQTT_TASK_PRIORITY          8
-#define MQTT_TASK_STACK_SIZE        2048
-#define MQTT_TASK_NAME              "MqttTask"
-
-/* ------------------------------------------------------------------------- */
-/* ---------------------------- Tasks' Switches ---------------------------- */
-/* ------------------------------------------------------------------------- */
-
-// #define ENABLE_GPIO_TASK
-// #define ENABLE_UART_TASK
-// #define ENABLE_CALL_TASK
-// #define ENABLE_SMS_TASK
-// #define ENABLE_GPS_TASK
-#define ENABLE_GPRS_TASK
-// #define ENABLE_MQTT_TASK
+#define GPIO_TRACE_INDEX            1
 
 
 /* ------------------------------------------------------------------------- */
 /* ------------------------------ Tasks' APIs ------------------------------ */
 /* ------------------------------------------------------------------------- */
 
-void F21_Main(void * pData);
-void F21MainTask(void * pData);
-void EventDispatch(API_Event_t * pEvent);
+void GPIO_Task(void * pData);
 
 
-#endif  /* _F21_H_  */
+#endif  /*  _GPIO_TASK_H_   */
 
 /* ------------------------------------------------------------------------- */
 /* ------------------------------ End Of File ------------------------------ */
 /* ------------------------------------------------------------------------- */
-
