@@ -89,7 +89,8 @@ static HANDLE mqttTaskHandle;
 
 /* ----------------------------- Trace Indices ----------------------------- */
 
-#define BATTERY_INFO_TRACE_INDEX    15
+#define SIGNAL_INFO_TRACE_INDEX     15
+#define BATTERY_INFO_TRACE_INDEX    16
 #define SYS_INFO_TRACE_INDEX        16
 
 /* ----------------------------- System Globals ---------------------------- */
@@ -177,9 +178,9 @@ void EventDispatch(API_Event_t *pEvent)
         break;
 
     case API_EVENT_ID_SIGNAL_QUALITY:
-        Trace(SYS_INFO_TRACE_INDEX, "[SIGNAL QUALITY EVENT] Signal Quality: %d", pEvent->param1);
-        Trace(SYS_INFO_TRACE_INDEX, "[SIGNAL QUALITY EVENT] RSSI: %d", pEvent->param1 * 2 - 113);
-        Trace(SYS_INFO_TRACE_INDEX, "[SIGNAL QUALITY EVENT] RX Qual: %d", pEvent->param2);
+        Trace(SIGNAL_INFO_TRACE_INDEX, "[SIGNAL QUALITY EVENT] Signal Quality: %d", pEvent->param1);
+        Trace(SIGNAL_INFO_TRACE_INDEX, "[SIGNAL QUALITY EVENT] RSSI: %d", pEvent->param1 * 2 - 113);
+        Trace(SIGNAL_INFO_TRACE_INDEX, "[SIGNAL QUALITY EVENT] RX Qual: %d", pEvent->param2);
         break;
 
     case API_EVENT_ID_NETWORK_GOT_TIME:
@@ -207,7 +208,12 @@ void EventDispatch(API_Event_t *pEvent)
     case API_EVENT_ID_NETWORK_REGISTERED_HOME:
     case API_EVENT_ID_NETWORK_REGISTERED_ROAMING:
         OS_ReleaseSemaphore(semNetworkRegisteration);
-        Trace(SYS_INFO_TRACE_INDEX, "[NEtWORK REGISTrATION EVENT] Network registration complete...");
+        Trace(SYS_INFO_TRACE_INDEX, "[NEtWORK REGISTATION EVENT] Network registration complete...");
+
+#if defined(ENABLE_GPRS_TASK)
+        GPRS_TASK_NetworkRegistered_EventHandler(pEvent);
+#endif  /*  ENABLE_GPRS_TASK    */
+
         break;
     
     case API_EVENT_ID_NETWORK_DEREGISTER:

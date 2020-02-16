@@ -20,30 +20,46 @@
 #include "api_socket.h"
 #include "api_hal_uart.h"
 
+#include "gps.h"
+#include "buffer.h"
+#include "gps_parse.h"
+
 #include "../include/gprs_task.h"
+#include "../include/strutil.h"
 #include "../include/F21.h"
 
+/* ------------------------------------------------------------------------- */
+/* ---------------------------- Global Variables --------------------------- */
+/* ------------------------------------------------------------------------- */
+
+extern HANDLE semNetworkRegisteration;
 
 HANDLE gprsTaskHandle;
 HANDLE cellInfoTaskHandle;
 
-extern HANDLE semNetworkRegisteration;
+/* ------------------------------------------------------------------------- */
+/* --------------------------- Private Variables --------------------------- */
+/* ------------------------------------------------------------------------- */
 
-static HANDLE socketSemaphore;
+static bool bNetworkActivated = false;
+static bool bSocketConnected = false;
+static bool bSocketWriteComplete = true;
+
 static Network_PDP_Context_t sGPRS_NetworkContext = {
     .apn = GPRS_AP_NAME,
     .userName = GPRS_USERNAME,
     .userPasswd = GPRS_PASSWORD,
 };
 
-static bool bNetworkActivated = false;
+static uint8_t TxBuffer[1024] = {0};
+static int32_t SocketFd = 0;
 
-
-
+/* ------------------------------------------------------------------------- */
+/* ---------------------------- API Definitions ---------------------------- */
+/* ------------------------------------------------------------------------- */
 
 void GPRS_Task(void *pData)
 {
-    API_Event_t *Local_psGprsEvent = NULL;
     UART_Config_t Local_sUartConfig = {0};
 
     Local_sUartConfig.baudRate = UART_BAUD_RATE_115200;
@@ -62,25 +78,16 @@ void GPRS_Task(void *pData)
         Trace(GPRS_TRACE_INDEX, "[GPRS] Network registration complete.");
     }
 
-    Network_StartDetach();
-    Network_StartDeactive(1);
-
-    while (!(bNetworkActivated = GPRS_NetworkActivate()))
+    Trace(GPRS_TRACE_INDEX, "[GPRS] Starting network activation procedure.");
+    while(GPRS_NetworkActivate() == false)
     {
-        Trace(GPRS_TRACE_INDEX, "[GPRS] Network attach failed, retrying.");
-        OS_Sleep(5000);
+        OS_Sleep(2000);
     }
-    Trace(GPRS_TRACE_INDEX, "[GPRS] Network activated.");
+    Trace(GPRS_TRACE_INDEX, "[GPRS] Network activation process complete.");
 
     while (1)
     {
-        if (OS_WaitEvent(gprsTaskHandle, (void **)&Local_psGprsEvent, OS_TIME_OUT_WAIT_FOREVER))
-        {
-            EventDispatch(Local_psGprsEvent);
-            OS_Free(Local_psGprsEvent->pParam1);
-            OS_Free(Local_psGprsEvent->pParam2);
-            OS_Free(Local_psGprsEvent);
-        }
+        OS_Sleep(1000);
     }
 }
 
@@ -90,10 +97,10 @@ void GPRS_GetCellInfoTask(void *pData)
 {
     CHAR Local_acNetworkIp[20] = {0};
     
-    while (!bNetworkActivated)
+    Trace(GPRS_TRACE_INDEX, "[CELL INFO] Waiting for network activation.");
+    while(!bNetworkActivated)
     {
-        Trace(GPRS_TRACE_INDEX, "[CELL INFO] Waiting for network activation.");
-        OS_Sleep(5000);
+        OS_Sleep(1000);
     }
 
     while (1)
@@ -117,6 +124,13 @@ void GPRS_GetCellInfoTask(void *pData)
         
         OS_Sleep(60000);
     }
+}
+
+/* ------------------------------------------------------------------------- */
+
+void GPRS_LocationUpdateTask(void * pData)
+{
+    
 }
 
 /* ------------------------------------------------------------------------- */
@@ -186,6 +200,14 @@ bool GPRS_NetworkActivate(void)
 
 /* ------------------------------------------------------------------------- */
 
+void GPRS_TASK_NetworkRegistered_EventHandler(API_Event_t *pEvent)
+{
+    Trace(GPRS_TRACE_INDEX, "[NETWORK REGISTERED EVENT] Starting network attach process");
+    Network_StartAttach();
+}
+
+/* ------------------------------------------------------------------------- */
+
 void GPRS_TASK_Attached_EventHandler(API_Event_t *pEvent)
 {
     Trace(GPRS_TRACE_INDEX, "[NETWORK ATTACHED EVENT] Network Attached.");
@@ -195,35 +217,38 @@ void GPRS_TASK_Attached_EventHandler(API_Event_t *pEvent)
 
 void GPRS_TASK_AttachFailed_EventHandler(API_Event_t *pEvent)
 {
-    Trace(GPRS_TRACE_INDEX, "[NETWORK ATTACHED EVENT] Network Attach failed.");
+    Trace(GPRS_TRACE_INDEX, "[NETWORK ATTACH FAILED EVENT] Network Attach failed.");
 }
 
 /* ------------------------------------------------------------------------- */
 
 void GPRS_TASK_DeAttached_EventHandler(API_Event_t *pEvent)
 {
-    Trace(GPRS_TRACE_INDEX, "[NETWORK ATTACHED EVENT] Network De-Attached.");
+    Trace(GPRS_TRACE_INDEX, "[NETWORK DE-ATTACHED EVENT] Network De-Attached.");
 }
 
 /* ------------------------------------------------------------------------- */
 
 void GPRS_TASK_Activated_EventHandler(API_Event_t *pEvent)
 {
-    Trace(GPRS_TRACE_INDEX, "[NETWORK ATTACHED EVENT] Network Activated.");
+    Trace(GPRS_TRACE_INDEX, "[NETWORK ACTIVATED EVENT] Network Activated.");
+    bNetworkActivated = true;
 }
 
 /* ------------------------------------------------------------------------- */
 
 void GPRS_TASK_ActivateFailed_EventHandler(API_Event_t *pEvent)
 {
-    Trace(GPRS_TRACE_INDEX, "[NETWORK ATTACHED EVENT] Network Activate Failure.");
+    Trace(GPRS_TRACE_INDEX, "[NETWORK ACTIVATE FAILED EVENT] Network Activate Failure.");
+    bNetworkActivated = false;
 }
 
 /* ------------------------------------------------------------------------- */
 
 void GPRS_TASK_DeActivated_EventHandler(API_Event_t *pEvent)
 {
-    Trace(GPRS_TRACE_INDEX, "[NETWORK ATTACHED EVENT] Network De-Activated.");
+    Trace(GPRS_TRACE_INDEX, "[NETWORK DE-ACTIVATED EVENT] Network De-Activated.");
+    bNetworkActivated = false;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -240,11 +265,19 @@ void GPRS_UART_RX_EventHandler(API_Event_t * pEvent)
             if(pEvent->param2)
             {
                 memcpy(Local_au8Buffer, pEvent->pParam1, MIN(1024, pEvent->param2));
-                Local_pcDataStart = strstr((char *)Local_au8Buffer, "send:");
-                Local_pcDataStart += 5;
-                Local_u32DataLen = strlen(Local_pcDataStart);
-                Trace(GPRS_TRACE_INDEX, "[TCP SEND] Sending TCP data: %s", Local_pcDataStart);
-                GPRS_TcpSend(TEST_TCP_SERVER_IP, TEST_TCP_SERVER_PORT, Local_pcDataStart, Local_u32DataLen);
+                strip(Local_au8Buffer, MIN(1024, pEvent->param2));
+                Trace(GPRS_TRACE_INDEX, "[GPRS UART RX] Received cmd: %s", pEvent->pParam1);
+                if((Local_pcDataStart = strstr((char *)Local_au8Buffer, GPRS_UART_CMD_PREFIX)))
+                {
+                    Local_pcDataStart += strlen(GPRS_UART_CMD_PREFIX);
+                    Local_u32DataLen = strlen(Local_pcDataStart);
+                    Trace(GPRS_TRACE_INDEX, "[GPRS UART RX] Sending TCP data: %s", Local_pcDataStart);
+                    GPRS_TcpSend(TEST_TCP_SERVER_ADDRESS, TEST_TCP_SERVER_PORT, Local_pcDataStart, Local_u32DataLen);
+                }
+                else
+                {
+                    Trace(GPRS_TRACE_INDEX, "[GPRS UART RX] Invalid command prefix");
+                }
             }
             break;
 
@@ -258,6 +291,7 @@ void GPRS_UART_RX_EventHandler(API_Event_t * pEvent)
 void GPRS_SOCKET_CONNECTED_EventHandler(API_Event_t * pEvent)
 {
     Trace(TCP_TRACE_INDEX, "[SOCKET CONNECTED EVENT] Socket connected. Socket FD: %d", pEvent->param1);
+    Socket_TcpipWrite(pEvent->param1, TxBuffer, strlen(TxBuffer));
 }
 
 /* ------------------------------------------------------------------------- */
@@ -272,14 +306,14 @@ void GPRS_SOCKET_CLOSED_EventHandler(API_Event_t * pEvent)
 void GPRS_SOCKET_SENT_EventHandler(API_Event_t * pEvent)
 {
     Trace(TCP_TRACE_INDEX, "[SOCKET SENT EVENT] Socket [ %d ] Send complete.", pEvent->param1);
+    bSocketWriteComplete = true;
 }
 
 /* ------------------------------------------------------------------------- */
 
 void GPRS_SOCKET_RECEIVED_EventHandler(API_Event_t * pEvent)
 {
-    Trace(TCP_TRACE_INDEX, "[SOCKET rECEIVE EVENT] Socket [ %d ] received [ %d ] bytes", pEvent->param1, pEvent->param2);
-    OS_ReleaseSemaphore(socketSemaphore);
+    Trace(TCP_TRACE_INDEX, "[SOCKET RECEIVE EVENT] Socket [ %d ] received [ %d ] bytes", pEvent->param1, pEvent->param2);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -287,20 +321,21 @@ void GPRS_SOCKET_RECEIVED_EventHandler(API_Event_t * pEvent)
 void GPRS_SOCKET_ERROR_EventHandler(API_Event_t * pEvent)
 {
     Trace(TCP_TRACE_INDEX, "[SOCKET ERROR EVENT] Socket Error on socket [%d ] Code: %d", pEvent->param1, pEvent->param2);
+    bSocketConnected = false;
 }
 
 /* ------------------------------------------------------------------------- */
 
 void GPRS_DNS_SUCCESS_EventHandler(API_Event_t * pEvent)
 {
-
+    Trace(TCP_TRACE_INDEX, "[DNS SUCCESS EVENT HANDLER] DNS request successful. Domain: %s, IP: %s", pEvent->pParam1, pEvent->pParam2);
 }
 
 /* ------------------------------------------------------------------------- */
 
 void GPRS_DNS_FAIL_EventHandler(API_Event_t * pEvent)
 {
-
+    Trace(TCP_TRACE_INDEX, "[DNS SUCCESS EVENT HANDLER] DNS request failed.");
 }
 
 /* ------------------------------------------------------------------------- */
@@ -309,44 +344,41 @@ int32_t GPRS_TcpSend(const char * Copy_pcAddress, uint32_t Copy_u32PortNum, uint
 {
     int32_t Local_i32SocketErr = 0;
     uint32_t Local_u32SocketFD = 0;
+    uint8_t Local_au8IpAddress[20] = {0};
+    CHAR Local_acTxbuffer[1024] = {0};
 
-    socketSemaphore = OS_CreateSemaphore(0);
-
-    Local_i32SocketErr = Socket_TcpipConnect(TCP, TEST_TCP_SERVER_IP, TEST_TCP_SERVER_PORT);
-    if(Local_i32SocketErr < 0)
+    if(bNetworkActivated == true)
     {
-        Trace(TCP_TRACE_INDEX, "[SOCKET] Socekt connection failed. Error code [ %d ]", Local_i32SocketErr);
-    }
-    else
-    {
-        Local_u32SocketFD = Local_i32SocketErr;
-        Trace(TCP_TRACE_INDEX, "[SOCKET] Created Socket. Socket FD: [ %d ]", Local_u32SocketFD);
-
-        Trace(TCP_TRACE_INDEX, "[SOCKET] Sending data : %s [ %d bytes ]", Copy_au8Txbuffer, Copy_u32BuffSize);
-        Local_i32SocketErr = Socket_TcpipWrite(Local_u32SocketFD, Copy_au8Txbuffer, Copy_u32BuffSize);
-        if(Local_i32SocketErr > 0)
+        if(bSocketWriteComplete == true)
         {
-            Trace(TCP_TRACE_INDEX, "[SOCKET] Data sent successfyully. Waiting for server's reply.");
-            OS_WaitForSemaphore(socketSemaphore, OS_TIME_OUT_WAIT_FOREVER);
-            Local_i32SocketErr = Socket_TcpipRead(Local_u32SocketFD, Copy_au8Txbuffer, Copy_u32BuffSize);
-            if(Local_i32SocketErr > 0)
+            bSocketWriteComplete = false;
+            Trace(TCP_TRACE_INDEX, "[TCP DNS] Requesting IP address for domain: %s", Copy_pcAddress);
+            while( (Local_i32SocketErr = (DNS_GetHostByName2(Copy_pcAddress, Local_au8IpAddress) & 0x03) != DNS_STATUS_OK) )
             {
-                Trace(TCP_TRACE_INDEX, "[SOCKET] Server response: %s", Copy_au8Txbuffer);
+                Trace(TCP_TRACE_INDEX, "[TCP DNS] DNS request failed. Error code: %d", Local_i32SocketErr);
+                OS_Sleep(1000);
             }
-            else
-            {
-                Trace(TCP_TRACE_INDEX, "[SOCKET] Socket read failed");
-            }
+            Trace(TCP_TRACE_INDEX, "[TCP DNS] DNS Lookup complete. IP address for domain %s is %s", Copy_pcAddress, (char *)Local_au8IpAddress);
+
+            memset(TxBuffer, 0x00, sizeof(TxBuffer));
+            memcpy(TxBuffer, Copy_au8Txbuffer, Copy_u32BuffSize);
+            TxBuffer[Copy_u32BuffSize] = '\n';
+            SocketFd = Socket_TcpipConnect(TCP, Local_au8IpAddress, TEST_TCP_SERVER_PORT);
         }
         else
         {
-            Trace(TCP_TRACE_INDEX, "[SOCKET] Socekt Write failed. Error code : [ %d ]", Local_i32SocketErr);
+            Trace(TCP_TRACE_INDEX, "[TCP SOCKET] A write operation is already pending.");
+            SocketFd = -2;
         }
-
-        Socket_TcpipClose(Local_u32SocketFD);
+        
+    }
+    else
+    {
+        Trace(TCP_TRACE_INDEX, "[TCP SOCKET] can't start TCP connection while network is not connected.");
+        SocketFd = -1;
     }
     
-    return Local_i32SocketErr;
+    return SocketFd;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -354,14 +386,11 @@ int32_t GPRS_TcpSend(const char * Copy_pcAddress, uint32_t Copy_u32PortNum, uint
 int32_t GPRS_HttpGet(const char *Copy_pcAddress, uint8_t *Copy_pu8Response, uint32_t Copy_u32BufferSize)
 {
     int32_t Local_i32SocketErr = 0;
-    uint32_t Local_u32SocketFD = 0;
 
 
     
     return Local_i32SocketErr;
 }
-
-/* ------------------------------------------------------------------------- */
 
 
 /* ------------------------------------------------------------------------- */
