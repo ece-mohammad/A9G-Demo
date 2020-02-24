@@ -13,15 +13,6 @@
 #define MAIN_TASK_STACK_SIZE        1024
 #define MAIN_TASK_NAME              "MainTask"
 
-
-#define CELL_INFO_TASK_PRIORITY     7
-#define CELL_INFO_TASK_STACK_SIZE   2048
-#define CELL_INFO_TASK_NAME         "CellInfoTask"
-
-#define MQTT_TASK_PRIORITY          8
-#define MQTT_TASK_STACK_SIZE        2048
-#define MQTT_TASK_NAME              "MqttTask"
-
 /* ------------------------------------------------------------------------- */
 /* ---------------------------- Tasks' Switches ---------------------------- */
 /* ------------------------------------------------------------------------- */
@@ -31,8 +22,8 @@
 // #define ENABLE_CALL_TASK
 // #define ENABLE_SMS_TASK
 // #define ENABLE_GPS_TASK
-#define ENABLE_GPRS_TASK
-// #define ENABLE_MQTT_TASK
+// #define ENABLE_GPRS_TASK
+#define ENABLE_MQTT_TASK
 
 
 /* ------------------------------------------------------------------------- */

@@ -13,6 +13,7 @@
 #include "api_os.h"
 #include "api_event.h"
 #include "api_debug.h"
+#include "api_info.h"
 
 #include "api_hal_pm.h"
 
@@ -41,6 +42,10 @@
 #if defined(ENABLE_GPRS_TASK)
 #include "../include/gprs_task.h"
 #endif /*  ENABLE_GPRS_TASK    */
+
+#if defined(ENABLE_MQTT_TASK)
+#include "../include/mqtt_task.h"
+#endif  /*  ENABLE_MQTT_TASK    */
 
 /* ------------------------------------------------------------------------- */
 /* --------------------- Global Variables & Definitions -------------------- */
@@ -79,12 +84,12 @@ extern HANDLE smsTaskHandle;
 #if defined(ENABLE_GPRS_TASK)
 extern HANDLE gprsTaskHandle;
 extern HANDLE cellInfoTaskHandle;
+extern HANDLE locationUpdateTaskHandle;
 #endif /*  ENABLE_GPRS_TASK    */
 
 /* ---------------------------- MQTT task handle --------------------------- */
 #if defined(ENABLE_MQTT_TASK)
 static HANDLE mqttTaskHandle;
-#define MQTT_TRACE_INDEX    9
 #endif /*  ENABLE_MQTT_TASK    */
 
 /* ----------------------------- Trace Indices ----------------------------- */
@@ -95,8 +100,9 @@ static HANDLE mqttTaskHandle;
 
 /* ----------------------------- System Globals ---------------------------- */
 
-HANDLE semSystemReady;
-HANDLE semNetworkRegisteration;
+bool bNetworkRegisteration;
+static HANDLE mNetworkState;
+uint8_t DeviceIMEI [20] = {0};
 
 /* ------------------------------------------------------------------------- */
 /* ---------------------------- API Definitions ---------------------------- */
@@ -104,6 +110,7 @@ HANDLE semNetworkRegisteration;
 
 void F21_Main(void *pData)
 {
+    mNetworkState = OS_CreateMutex();
     mainTaskHandle = OS_CreateTask(F21MainTask, NULL, NULL, MAIN_TASK_STACK_SIZE, MAIN_TASK_PRIORITY, 0, 0, MAIN_TASK_NAME);
     OS_SetUserMainHandle(&mainTaskHandle);
 }
@@ -113,9 +120,6 @@ void F21_Main(void *pData)
 void F21MainTask(void *pData)
 {
     API_Event_t *Local_sEvent = NULL;
-
-    semNetworkRegisteration = OS_CreateSemaphore(0);
-    semSystemReady = OS_CreateSemaphore(0);
 
 #if defined(ENABLE_GPIO_TASK)
     gpioTaskHandle = OS_CreateTask(GPIO_Task, NULL, NULL, GPIO_TASK_STACK_SIZE, GPIO_TASK_PRIORITY, 0, 0, GPIO_TASK_NAME);
@@ -140,7 +144,12 @@ void F21MainTask(void *pData)
 #if defined(ENABLE_GPRS_TASK)
     gprsTaskHandle = OS_CreateTask(GPRS_Task, NULL, NULL, GPRS_TASK_STACK_SIZE, GPRS_TASK_PRIORITY, 0, 0, GPRS_TASK_NAME);
     cellInfoTaskHandle = OS_CreateTask(GPRS_GetCellInfoTask, NULL, NULL, CELL_INFO_TASK_STACK_SIZE, CELL_INFO_TASK_PRIORITY, 0, 0, CELL_INFO_TASK_NAME);
+    locationUpdateTaskHandle = OS_CreateTask(GPRS_LocationUpdateTask, NULL, NULL, LOCATION_UPDATE_TASK_STACK_SIZE, LOCATION_UPDATE_TASK_PRIORITY, 0, 0, LOCATION_UPDATE_TASK_NAME);
 #endif /*  ENABLE_GPRS_TASK   */
+
+#if defined(ENABLE_MQTT_TASK)
+    mqttTaskHandle = OS_CreateTask(MQTT_Task, NULL, NULL, MQTT_TASK_STACK_SIZE, MQTT_TASK_PRIORITY, 0, 0, MQTT_TASK_NAME);
+#endif  /*  ENABLE_MQTT_TASK    */
 
     while (1)
     {
@@ -165,8 +174,11 @@ void EventDispatch(API_Event_t *pEvent)
         break;
 
     case API_EVENT_ID_SYSTEM_READY:
-        OS_ReleaseSemaphore(semSystemReady);
         Trace(SYS_INFO_TRACE_INDEX, "[SYSTEM READY EVENT] Pudding system is ready...");
+        if(INFO_GetIMEI(DeviceIMEI))
+        {
+            Trace(SYS_INFO_TRACE_INDEX, "[SYS INFO EVENT] Device IMEI: %s", DeviceIMEI);
+        }
         break;
 
     case API_EVENT_ID_NO_SIMCARD:
@@ -207,18 +219,26 @@ void EventDispatch(API_Event_t *pEvent)
 
     case API_EVENT_ID_NETWORK_REGISTERED_HOME:
     case API_EVENT_ID_NETWORK_REGISTERED_ROAMING:
-        OS_ReleaseSemaphore(semNetworkRegisteration);
-        Trace(SYS_INFO_TRACE_INDEX, "[NEtWORK REGISTATION EVENT] Network registration complete...");
+        Trace(SYS_INFO_TRACE_INDEX, "[NETWORK REGISTATION EVENT] Network registration complete.");
+        OS_LockMutex(mNetworkState);
+        bNetworkRegisteration = true;
+        OS_UnlockMutex(mNetworkState);
 
 #if defined(ENABLE_GPRS_TASK)
-        GPRS_TASK_NetworkRegistered_EventHandler(pEvent);
+        GPRS_NetworkRegistered_EventHandler(pEvent);
 #endif  /*  ENABLE_GPRS_TASK    */
+
+#if defined(ENABLE_MQTT_TASK)
+    MQTT_NetworkRegistered_EventHandler(pEvent);
+#endif  /*  ENABLE_MQTT_TASK    */
 
         break;
     
     case API_EVENT_ID_NETWORK_DEREGISTER:
-        OS_WaitForSemaphore(semNetworkRegisteration, OS_TIME_OUT_NO_WAIT);
         Trace(SYS_INFO_TRACE_INDEX, "[NETWORK DE_REGISTRATION EVENT] Network deregistered!");
+        OS_LockMutex(mNetworkState);
+        bNetworkRegisteration = false;
+        OS_UnlockMutex(mNetworkState);
         Trace(SYS_INFO_TRACE_INDEX, "[NETWORK DE_REGISTRATION EVENT] Restarting after 5 seconds...");
         OS_Sleep(5000);
         PM_Restart();
@@ -238,11 +258,9 @@ void EventDispatch(API_Event_t *pEvent)
         break;
 
 #elif defined(ENABLE_GPRS_TASK)
-
         GPRS_UART_RX_EventHandler(pEvent);
         break;
-
-#else // UART_TASK
+#else /* UART_TASK  */
 
 #if defined(ENABLE_UART_EVENTS)
 
@@ -261,7 +279,7 @@ void EventDispatch(API_Event_t *pEvent)
         GPS_UART_RX_EventHandler(pEvent);
         break;
 
-#endif /*  ENABLE_GPS_TASK    */
+#endif  /*  ENABLE_GPRS_TASK  */
 
 #if defined(ENABLE_SMS_TASK)
 
@@ -301,52 +319,84 @@ void EventDispatch(API_Event_t *pEvent)
 
 #if defined(ENABLE_GPRS_TASK)
 
+    case API_EVENT_ID_GPS_UART_RECEIVED:
+        GPRS_GPS_EventHandler(pEvent);
+        break;
+
     case API_EVENT_ID_NETWORK_DETACHED:
-        GPRS_TASK_DeAttached_EventHandler(pEvent);
+        GPRS_NetworkDeAttached_EventHandler(pEvent);
         break;
 
     case API_EVENT_ID_NETWORK_ATTACH_FAILED:
-        GPRS_TASK_AttachFailed_EventHandler(pEvent);
+        GPRS_NetworkAttachFailed_EventHandler(pEvent);
         break;
 
     case API_EVENT_ID_NETWORK_ATTACHED:
-        GPRS_TASK_Attached_EventHandler(pEvent);
+        GPRS_NetworkAttached_EventHandler(pEvent);
         break;
 
     case API_EVENT_ID_NETWORK_DEACTIVED:
-        GPRS_TASK_DeActivated_EventHandler(pEvent);
+        GPRS_NetworkDeActivated_EventHandler(pEvent);
         break;
 
     case API_EVENT_ID_NETWORK_ACTIVATE_FAILED:
-        GPRS_TASK_ActivateFailed_EventHandler(pEvent);
+        GPRS_NetworkActivationFailed_EventHandler(pEvent);
         break;
 
     case API_EVENT_ID_NETWORK_ACTIVATED:
-        GPRS_TASK_Activated_EventHandler(pEvent);
+        GPRS_NetworkActivated_EventHandler(pEvent);
         break;
     
     case API_EVENT_ID_SOCKET_CONNECTED:
-        GPRS_SOCKET_CONNECTED_EventHandler(pEvent);
+        GPRS_SocketConnected_EventHandler(pEvent);
         break;
 
     case API_EVENT_ID_SOCKET_CLOSED:
-        GPRS_SOCKET_CLOSED_EventHandler(pEvent);
+        GPRS_SocketClosed_EventHandler(pEvent);
         break;
 
     case API_EVENT_ID_SOCKET_SENT:
-        GPRS_SOCKET_SENT_EventHandler(pEvent);
+        GPRS_SokcetSent_EventHandler(pEvent);
         break;
 
     case API_EVENT_ID_SOCKET_RECEIVED:
-        GPRS_SOCKET_RECEIVED_EventHandler(pEvent);
+        GPRS_SocektReceived_EventHandler(pEvent);
         break;
 
     case API_EVENT_ID_SOCKET_ERROR:
-        GPRS_SOCKET_ERROR_EventHandler(pEvent);
+        GPRS_SocketError_EventHandler(pEvent);
         break;
 
-
 #endif /*  ENABLE_GPRS_TASK    */
+
+#if defined(ENABLE_MQTT_TASK)
+
+    case API_EVENT_ID_NETWORK_DETACHED:
+        MQTT_NetworkDeAttached_EventHandler(pEvent);
+        break;
+
+    case API_EVENT_ID_NETWORK_ATTACH_FAILED:
+        MQTT_NetworkAttachFailed_EventHandler(pEvent);
+        break;
+
+    case API_EVENT_ID_NETWORK_ATTACHED:
+        MQTT_NetworkAttached_EventHandler(pEvent);
+        break;
+
+    case API_EVENT_ID_NETWORK_DEACTIVED:
+        MQTT_NetworkDeActivated_EventHandler(pEvent);
+        break;
+
+    case API_EVENT_ID_NETWORK_ACTIVATE_FAILED:
+        MQTT_NetworkActivationFailed_EventHandler(pEvent);
+        break;
+
+    case API_EVENT_ID_NETWORK_ACTIVATED:
+        MQTT_NetworkActivated_EventHandler(pEvent);
+        break;
+
+#endif  /*  ENABLE_MQTT_TASK    */
+
 
     case API_EVENT_ID_POWER_INFO:
         Trace(BATTERY_INFO_TRACE_INDEX, "[POWER INFO EVENT] Battery charger state: %d", ((pEvent->param1 >> 16) & 0xFFFFu));
