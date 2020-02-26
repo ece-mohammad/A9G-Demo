@@ -5,6 +5,10 @@
 #ifndef _MQTT_TASK_H_
 #define _MQTT_TASK_H_
 
+#define MQTT_EVENT_BASED        1
+#define MQTT_FSM_BASED          0
+#define MQTT_CODE               MQTT_FSM_BASED
+
 
 /* ------------------------------------------------------------------------- */
 /* ----------------------------- Custom  Types ----------------------------- */
@@ -21,21 +25,34 @@ typedef enum ___mqtt_state {
 
 typedef enum __mqtt_error{
     MQTT_ERR_NONE,
+    MQTT_ERR_NO_CLIENT,
     MQTT_ERR_CONNECTION_FAILED,
     MQTT_ERR_SUBSCRIPTION_FAILED,
     MQTT_ERR_PUBLISH_FAILED,
+    MQTT_ERR_DISCONNECTED,
 } MQTT_Err_t;
+
+typedef struct __mqtt_buffer {
+    uint8_t buffer[1024];
+    uint32_t len;
+    HANDLE lock;
+    bool is_dirty;
+}MQTT_Buffer_t;
 
 
 /* ------------------------------------------------------------------------- */
 /* --------------------------- Tasks' Constants ---------------------------- */
 /* ------------------------------------------------------------------------- */
 
-#define MQTT_TASK_PRIORITY              10
+#define UART_TASK_PRIORITY              10
+#define UART_TASK_STACK_SIZE            2048
+#define UART_TASK_NAME                  "UarttTask"
+#define UART_TRACE_INDEX                10
+
+#define MQTT_TASK_PRIORITY              1
 #define MQTT_TASK_STACK_SIZE            2048
 #define MQTT_TASK_NAME                  "MqttTask"
-
-#define MQTT_TRACE_INDEX                10
+#define MQTT_TRACE_INDEX                11
 
 #define MQTT_SERVER_ADDRESS             "21farmer.com"
 #define MQTT_SERVER_PORT                1883
@@ -53,15 +70,17 @@ typedef enum __mqtt_error{
 #define MQTT_CLIENT_RECONNECT_INTERVAL  3000
 #define MQTT_CLIENT_PUBLISH_INTERVAL    10
 
-#define MQTT_PUBLISH_PAYLOAD            "{\"client_id\":\"%s\", \"test_message\":%d}"
+#define MQTT_PUBLISH_PAYLOAD            "{\"client_id\":\"%s\", \"message_id\":%d, \"test_message\":%s}"
 #define MQTT_TOPIC_QOS                  2
 
+#define UART_CMD_PREFIX                 "send:"
 
 /* ------------------------------------------------------------------------- */
 /* ------------------------------ Tasks' APIs ------------------------------ */
 /* ------------------------------------------------------------------------- */
 
 void MQTT_Task(void * pData);
+void UART_Task(void * pData);
 
 /*  state handlers  */
 void MQTT_Init_StateHandler(void * Copy_pvArgs);
@@ -77,6 +96,8 @@ void MQTT_Subscribed_Callback(void * Copy_pvArgs, MQTT_Error_t Copy_eError);
 void MQTT_Published_Callback(void * Copy_pvArgs, MQTT_Error_t Copy_eError);
 void MQTT_Received_Callback(void * Copy_pvArgs, const char * Copy_psTopic, uint32_t Copy_u32Len);
 void MQTT_ReceivedData_Callback(void * Copy_pvArgs, const uint8_t * Copy_pu8Data, uint16_t Copy_u16Len, MQTT_Flags_t Copy_eFlags);
+
+void UART_RX_EventHandler(API_Event_t * pEvent);
 
 /*  Network Events     */
 void MQTT_NetworkRegistered_EventHandler(API_Event_t *pEvent);

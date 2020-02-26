@@ -90,6 +90,7 @@ extern HANDLE locationUpdateTaskHandle;
 /* ---------------------------- MQTT task handle --------------------------- */
 #if defined(ENABLE_MQTT_TASK)
 static HANDLE mqttTaskHandle;
+extern HANDLE uartTaskHandle;
 #endif /*  ENABLE_MQTT_TASK    */
 
 /* ----------------------------- Trace Indices ----------------------------- */
@@ -149,6 +150,7 @@ void F21MainTask(void *pData)
 
 #if defined(ENABLE_MQTT_TASK)
     mqttTaskHandle = OS_CreateTask(MQTT_Task, NULL, NULL, MQTT_TASK_STACK_SIZE, MQTT_TASK_PRIORITY, 0, 0, MQTT_TASK_NAME);
+    uartTaskHandle = OS_CreateTask(UART_Task, NULL, NULL, UART_TASK_STACK_SIZE, UART_TASK_PRIORITY, 0, 0, UART_TASK_NAME);
 #endif  /*  ENABLE_MQTT_TASK    */
 
     while (1)
@@ -244,8 +246,7 @@ void EventDispatch(API_Event_t *pEvent)
         PM_Restart();
         break;
 
-#if defined(ENABLE_UART_TASK) || defined(ENABLE_SMS_TASK) || defined(ENABLE_CALL_TASK) || defined(ENABLE_GPRS_TASK)
-
+#if defined(ENABLE_UART_TASK) || defined(ENABLE_SMS_TASK) || defined(ENABLE_CALL_TASK) || defined(ENABLE_GPRS_TASK) || defined (ENABLE_MQTT_TASK)
     case API_EVENT_ID_UART_RECEIVED:
 
 #if defined(ENABLE_SMS_TASK)
@@ -260,6 +261,11 @@ void EventDispatch(API_Event_t *pEvent)
 #elif defined(ENABLE_GPRS_TASK)
         GPRS_UART_RX_EventHandler(pEvent);
         break;
+
+#elif defined(ENABLE_MQTT_TASK)
+        UART_RX_EventHandler(pEvent);
+        break;
+
 #else /* UART_TASK  */
 
 #if defined(ENABLE_UART_EVENTS)
@@ -271,7 +277,7 @@ void EventDispatch(API_Event_t *pEvent)
 
 #endif /*   ENABLE_SMS_TASK    */
 
-#endif /*  ENABLE_UART_TASK || ENABLE_SMS_TASK || ENABLE_CALL_TASK || ENABLE_GPRS_TASK  */
+#endif /*  ENABLE_UART_TASK || ENABLE_SMS_TASK || ENABLE_CALL_TASK || ENABLE_GPRS_TASK || ENABLE_MQTT_TASK  */
 
 #if defined(ENABLE_GPS_TASK)
 
