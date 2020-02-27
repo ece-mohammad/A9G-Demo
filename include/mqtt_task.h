@@ -68,7 +68,7 @@ typedef struct __mqtt_buffer {
 #define MQTT_SERVER_KEEPALIVE           120
 
 #define MQTT_CLIENT_RECONNECT_INTERVAL  3000
-#define MQTT_CLIENT_PUBLISH_INTERVAL    10
+#define MQTT_CLIENT_PUBLISH_INTERVAL    10000
 
 #define MQTT_PUBLISH_PAYLOAD            "{\"client_id\":\"%s\", \"message_id\":%d, \"test_message\":%s}"
 #define MQTT_TOPIC_QOS                  2
@@ -107,6 +107,9 @@ void MQTT_NetworkDeAttached_EventHandler(API_Event_t * pEvent);
 void MQTT_NetworkActivated_EventHandler(API_Event_t * pEvent);
 void MQTT_NetworkActivationFailed_EventHandler(API_Event_t * pEvent);
 void MQTT_NetworkDeActivated_EventHandler(API_Event_t * pEvent);
+
+void MQTT_StartPublishTimer(uint32_t u32WaitTime, MQTT_Client_t * psClient);
+void MQTT_PublishTimerCallback(void * pvArgs);
 
 #endif /*   _MQTT_TASK_H_   */
 

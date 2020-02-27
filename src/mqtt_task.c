@@ -59,6 +59,10 @@ static HANDLE MQTT_semClientsubscribed;
 static uint8_t UART_au8RxBuffer[1024] = {0};
 static MQTT_Buffer_t MQTT_sTxBuffer;
 
+static uint32_t MQTT_u32MessageId = 0;
+
+#define MQTT_MESSAGE_FORMAT "{\"client_id\":%s, \"message_id\":%d}"
+
 /* ------------------------------------------------------------------------- */
 /* ---------------------------- API Definitions ---------------------------- */
 /* ------------------------------------------------------------------------- */
@@ -139,7 +143,7 @@ void MQTT_Task(void *pData)
             OS_DeleteSemaphore(MQTT_semClientsubscribed);
             if (MQTT_eLastError == MQTT_ERR_NONE)
             {
-                MQTT_eCurrentState = MQTT_STATE_PUBLISH_DATA;
+                MQTT_eCurrentState = MQTT_STATE_IDLE;
             }
             else
             {
@@ -268,6 +272,7 @@ void MQTT_Connected_StateHandler(void *Copy_pvArgs)
     {
         Trace(MQTT_TRACE_INDEX, "[MQTT CONNECTED STATE HANDLER] MQTT Client subscribed to topic: %s", MQTT_TOPIC);
         MQTT_eLastError = MQTT_ERR_NONE;
+        MQTT_StartPublishTimer(MQTT_CLIENT_PUBLISH_INTERVAL, MQTT_psClient);
     }
     else
     {
@@ -317,7 +322,7 @@ void MQTT_Idle_StateHandler(void *pvArgs)
     {
         MQTT_eLastError = MQTT_ERR_DISCONNECTED;
         MQTT_eErrorCause = Local_eError;
-    }
+    }    
 }
 
 /* ------------------------------------------------------------------------- */
@@ -350,6 +355,12 @@ void MQTT_Error_StateHandler(void *pvArgs)
         Trace(MQTT_TRACE_INDEX, "[MQTT ERROR STATE HANDLER] MQTT Client disconnected. Trying to re-connect.");
         MQTT_eCurrentState = MQTT_STATE_DISCONNECTED;
         break;
+
+    case MQTT_ERR_NO_CLIENT:
+        Trace(MQTT_TRACE_INDEX, "[MQTT ERROR STATE HANDLER] No MQTT Client instance.");
+        MQTT_eCurrentState = MQTT_STATE_INIT;
+        break;
+        
 
     default:
         MQTT_eCurrentState = MQTT_STATE_IDLE;
@@ -538,6 +549,8 @@ void MQTT_NetworkRegistered_EventHandler(API_Event_t *pEvent)
     Network_StartAttach();
 }
 
+/* ------------------------------------------------------------------------- */
+
 void MQTT_NetworkAttached_EventHandler(API_Event_t *pEvent)
 {
     Trace(MQTT_TRACE_INDEX, "[MQTT NETWORK ATTACHED EVENT] Network Attach complete.");
@@ -550,11 +563,15 @@ void MQTT_NetworkAttachFailed_EventHandler(API_Event_t *pEvent)
     Network_StartAttach();
 }
 
+/* ------------------------------------------------------------------------- */
+
 void MQTT_NetworkDeAttached_EventHandler(API_Event_t *pEvent)
 {
     Trace(MQTT_TRACE_INDEX, "[MQTT NETWORK DE-ATTACHED EVENT] Network De-Attached.");
     Network_StartAttach();
 }
+
+/* ------------------------------------------------------------------------- */
 
 void MQTT_NetworkActivated_EventHandler(API_Event_t *pEvent)
 {
@@ -562,16 +579,58 @@ void MQTT_NetworkActivated_EventHandler(API_Event_t *pEvent)
     bNetworkActivated = true;
 }
 
+/* ------------------------------------------------------------------------- */
+
 void MQTT_NetworkActivationFailed_EventHandler(API_Event_t *pEvent)
 {
     Trace(MQTT_TRACE_INDEX, "[MQTT NETWORK ACTIVATE FAILED EVENT] Network Attach complete.");
     Network_StartActive(MQTT_sNetworkContext);
 }
 
+/* ------------------------------------------------------------------------- */
+
 void MQTT_NetworkDeActivated_EventHandler(API_Event_t *pEvent)
 {
     Trace(MQTT_TRACE_INDEX, "[MQTT NETWORK DE-ACTIVATED EVENT] Network Attach complete.");
     Network_StartActive(MQTT_sNetworkContext);
+}
+
+/* ------------------------------------------------------------------------- */
+
+void MQTT_PublishTimerCallback(void * pvArgs)
+{
+    MQTT_StartPublishTimer(MQTT_CLIENT_PUBLISH_INTERVAL, MQTT_psClient);
+    if(MQTT_psClient)
+    {
+        OS_WaitForSemaphore(MQTT_sTxBuffer.lock, OS_WAIT_FOREVER);
+        MQTT_sTxBuffer.len = snprintf(MQTT_sTxBuffer.buffer, sizeof(MQTT_sTxBuffer.buffer) - 1, MQTT_MESSAGE_FORMAT, DeviceIMEI, ++MQTT_u32MessageId);
+        MQTT_sTxBuffer.is_dirty = true;
+        OS_ReleaseSemaphore(MQTT_sTxBuffer.lock);
+        MQTT_eCurrentState = MQTT_STATE_PUBLISH_DATA;
+        Trace(MQTT_TRACE_INDEX, "[MQTT PUBLISH TIMER CALLBACK] Updated publish message.");
+    }
+    else
+    {
+        Trace(MQTT_TRACE_INDEX, "[MQTT PUBLISH TIMER CALLBACK] Can't publish. ");
+        MQTT_eLastError = MQTT_ERR_NO_CLIENT;
+    }
+}
+
+/* ------------------------------------------------------------------------- */
+
+void MQTT_StartPublishTimer(uint32_t u32WaitTime, MQTT_Client_t * psClient)
+{
+    HANDLE Local_hMainTaskHandle = OS_GetUserMainHandle();
+    if(Local_hMainTaskHandle)
+    {
+        OS_StartCallbackTimer(Local_hMainTaskHandle, u32WaitTime, MQTT_PublishTimerCallback, psClient);
+        Trace(MQTT_TRACE_INDEX, "[MQTT START PUBLISH TIMER] Started publish timer. Will publish after [ %d ] seconds.", u32WaitTime/1000);
+    }
+    else
+    {
+        Trace(MQTT_TRACE_INDEX, "[MQTT START PUBLISH TIMER] Failed to start publish timer. Coundln't get main task handle.");
+    }
+    
 }
 
 /* ------------------------------------------------------------------------- */
